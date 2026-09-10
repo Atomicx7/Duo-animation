@@ -1,0 +1,99 @@
+// Duo-Fold Effect — AGSL port of DuoLikeAnimation/Shaders/DuoFold.metal.
+//
+// Model:
+// - UI content lives on a fixed plane in world space (the zero-tilt screen plane).
+// - Eye is stationary on that plane's normal through the screen center,
+//   eyeDistancePx back from the plane.
+// - The tilted glass rotates by `tiltDegrees` around the screen-space Y axis,
+//   hinged on the edge farther from the viewer (that edge stays in the plane).
+// - Per pixel: ray from eye through the glass point, continued to the UI plane;
+//   Vogel-disk blur with radius proportional to the glass-to-plane gap, dimmed
+//   in proportion to how much it scatters. A fully-missed kernel is black.
+//
+// Uniform conventions (mirror the Metal shader):
+// - tiltDegrees: signed tilt in degrees around the screen-space Y axis.
+//   Positive = right edge farther from the viewer = hinge on the RIGHT
+//   (frost spreads left). Negative = hinge on the LEFT.
+// - hingeSide: +1 = hinge on RIGHT edge, -1 = hinge on LEFT edge.
+//   Resolved at runtime from the tilt sign — never hardcoded.
+// - blurSpread: blur radius gained per px of glass/plane separation.
+// - darkening: fraction of light lost per px of blur radius.
+//
+// NOTE: keep this shader to minimal AGSL constructs (no break/continue, no
+// bool locals, no helper functions) — anything fancier has failed to compile
+// on-device and silently disables the effect via the Kotlin fallback.
+
+uniform shader content;
+uniform float2 resolution;
+uniform float tiltDegrees;
+uniform float eyeDistancePx;
+uniform float hingeSide;
+uniform float blurSpread;
+uniform float darkening;
+
+const float GOLDEN_ANGLE = 2.39996322972865332; // radians, Vogel disk spacing
+const float TWO_PI = 6.28318530717958648;
+
+half4 main(float2 fragCoord) {
+    float2 size = resolution;
+    if (size.x <= 1.0 || size.y <= 1.0) {
+        return content.eval(fragCoord);
+    }
+
+    float tilt = radians(clamp(abs(tiltDegrees), 0.0, 45.0));
+    if (tilt < 1e-5) {
+        return content.eval(fragCoord);
+    }
+
+    // UI-plane frame: origin at top-left of the untilted screen, px, z toward viewer.
+    float isRight = step(0.0, hingeSide); // 1 = hinge on right edge
+    float hingeX = mix(0.0, size.x, isRight);
+    float side = mix(1.0, -1.0, isRight); // direction across the screen, away from hinge
+    float d = abs(fragCoord.x - hingeX);  // pixel distance from hinge, along the glass
+
+    // Glass rotated `tilt` around the hinge line, rising toward the viewer.
+    float2 glass = float2(hingeX + side * d * cos(tilt), fragCoord.y);
+    float gap = d * sin(tilt);
+    float2 eye = size * 0.5;
+
+    // Ray eye -> glass pixel, continued to the UI plane z = 0.
+    float depth = eyeDistancePx - gap;
+    if (depth <= 1e-3) {
+        return half4(0.0, 0.0, 0.0, 1.0);
+    }
+    float t = eyeDistancePx / depth;
+    float2 hit = eye + (glass - eye) * t;
+
+    float radius = blurSpread * gap;
+
+    // Whole blur kernel misses the UI: black.
+    if (hit.x < -radius || hit.y < -radius ||
+        hit.x > size.x + radius || hit.y > size.y + radius) {
+        return half4(0.0, 0.0, 0.0, 1.0);
+    }
+
+    // Frosted glass absorbs: dim in proportion to how much it scatters.
+    float atten = max(1.0 - darkening * radius, 0.0);
+
+    if (radius < 0.5) {
+        return content.eval(hit) * half(atten);
+    }
+
+    // Vogel disk with per-pixel rotation (banding becomes frosted-glass grain).
+    // Small kernels need few taps; fixed 32-iteration loop with a weight mask
+    // (no break) keeps frames cheap near the hinge and compiles everywhere.
+    float tapsF = clamp(radius * 2.0, 6.0, 32.0);
+    float rotation = fract(sin(dot(fragCoord, float2(12.9898, 78.233))) * 43758.5453) * TWO_PI;
+    half3 sum = half3(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < 32; i++) {
+        float fi = float(i);
+        float w = 1.0 - step(tapsF, fi);
+        float r = radius * sqrt((fi + 0.5) / tapsF);
+        float a = fi * GOLDEN_ANGLE + rotation;
+        sum += content.eval(hit + r * float2(cos(a), sin(a))).rgb * half(w);
+        wsum += w;
+    }
+    half3 avg = sum / half(max(wsum, 1.0));
+    return half4(avg * half(atten), 1.0);
+}

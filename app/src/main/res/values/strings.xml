@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">DuoFold</string>
+    <string name="recalibrate">Recalibrate</string>
+    <string name="tilt_label">Tilt: %.1f°</string>
+    <string name="mode_auto">Sensor</string>
+    <string name="mode_manual">Manual</string>
+</resources>
