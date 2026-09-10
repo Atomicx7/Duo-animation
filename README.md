@@ -1,8 +1,5 @@
 # DuoFold — iPhone Duo fold/opening animation for Android
 
-Port of elijah-semyonov/DuoLikeAnimation (SwiftUI/Metal/Core Motion) to
-Jetpack Compose + AGSL + SensorManager. Min SDK 33.
-
 ## Model
 Fixed interface plane at zero tilt · stationary eye on the plane normal
 (320mm default) · glass rotates around the hinge edge (runtime-resolved,
