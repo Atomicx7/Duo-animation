@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.atan2
+import kotlin.math.sqrt
 
 /**
  * Sensor model mirroring FoldMotionModel.swift.
@@ -33,6 +34,11 @@ import kotlin.math.atan2
  *   toward screen-right. Positive = right edge farther from the viewer.
  * - Gyro prediction along the screen's Y axis covers sensor/display latency,
  *   then a light low-pass (`SMOOTHING`) keeps hand and screen glued.
+ * - Auto-recenter washout: a slow baseline (`RECENTER_TAU_S`) continuously
+ *   absorbs gyro drift and slow posture shifts — but only while the device is
+ *   nearly still — so the zero pose maintains itself without hammering
+ *   Calibrate. Toggle with [setAutoRecenterEnabled]; Calibrate still snaps
+ *   instantly at any time.
  * - Hinge follows the tilt sign: positive tilt → hinge right (+1, frost on
  *   the left), negative tilt → hinge left (-1). Never hardcoded to one side.
  * - Exposes [tiltDegrees], [hingeSide] and [hasSensor] as StateFlows. With no
@@ -61,6 +67,11 @@ class FoldMotionModel(context: Context) : SensorEventListener {
 
     /** Smoothed tilt in radians (mirrors Swift `motionTilt`). */
     private var tiltRad = 0f
+    /** Slow baseline for auto-recenter (same units/frame as [tiltRad]). */
+    private var baselineRad = 0f
+    private var lastPredicted = 0f
+    private var autoRecenter = true
+    private var lastTimestampNs = 0L
 
     private val _tiltDegrees = MutableStateFlow(0f)
     val tiltDegrees: StateFlow<Float> = _tiltDegrees.asStateFlow()
@@ -98,7 +109,19 @@ class FoldMotionModel(context: Context) : SensorEventListener {
         pendingRecalibrate = true
         // Snap back immediately while waiting for the next sample.
         tiltRad = 0f
+        baselineRad = 0f
         _tiltDegrees.value = 0f
+    }
+
+    /**
+     * Enables/disables the auto-recenter washout. Enabling snaps the baseline
+     * to the latest reading so output doesn't jump.
+     */
+    fun setAutoRecenterEnabled(enabled: Boolean) {
+        autoRecenter = enabled
+        if (enabled) {
+            baselineRad = lastPredicted
+        }
     }
 
     /**
@@ -138,8 +161,34 @@ class FoldMotionModel(context: Context) : SensorEventListener {
                         gyroRate[0] * sy[0] + gyroRate[1] * sy[1] + gyroRate[2] * sy[2]
                     predicted = measured + omegaY * PREDICTION_INTERVAL
                 }
+                lastPredicted = predicted
 
-                tiltRad += (predicted - tiltRad) * SMOOTHING
+                // Auto-recenter washout: while the device is nearly still, drag
+                // the slow baseline toward the reading so drift can't accumulate
+                // into a permanent offset. Deliberate motion is untouched.
+                val nowNs = event.timestamp
+                val dtS = if (lastTimestampNs == 0L) 0.02f
+                else ((nowNs - lastTimestampNs) / 1_000_000_000f).coerceIn(0f, 0.5f)
+                lastTimestampNs = nowNs
+                if (autoRecenter) {
+                    val omegaMag = if (hasGyroSample) {
+                        sqrt(
+                            gyroRate[0] * gyroRate[0] +
+                                gyroRate[1] * gyroRate[1] +
+                                gyroRate[2] * gyroRate[2]
+                        )
+                    } else {
+                        0f
+                    }
+                    if (omegaMag < STILL_THRESHOLD_RAD_S) {
+                        val alpha = (dtS / RECENTER_TAU_S).coerceIn(0f, 1f)
+                        baselineRad += wrapAngle(predicted - baselineRad) * alpha
+                    }
+                }
+                val target =
+                    if (autoRecenter) wrapAngle(predicted - baselineRad) else predicted
+
+                tiltRad += wrapAngle(target - tiltRad) * SMOOTHING
                 val tiltDeg = Math.toDegrees(tiltRad.toDouble()).toFloat()
                     .coerceIn(-MAX_TILT, MAX_TILT)
                 _tiltDegrees.value = tiltDeg
@@ -188,6 +237,14 @@ class FoldMotionModel(context: Context) : SensorEventListener {
         else -> floatArrayOf(0f, 1f, 0f)
     }
 
+    /** Wraps an angle to [-PI, PI]. */
+    private fun wrapAngle(a: Float): Float {
+        var x = a % (2 * Math.PI.toFloat())
+        if (x > Math.PI) x -= (2 * Math.PI).toFloat()
+        if (x < -Math.PI) x += (2 * Math.PI).toFloat()
+        return x
+    }
+
     private fun transpose3(m: FloatArray): FloatArray =
         floatArrayOf(
             m[0], m[3], m[6],
@@ -211,5 +268,9 @@ class FoldMotionModel(context: Context) : SensorEventListener {
         const val SMOOTHING = 0.7f
         /** Gyro extrapolation horizon in seconds (mirrors Swift). */
         const val PREDICTION_INTERVAL = 0.04f
+        /** Auto-recenter washout time constant in seconds. */
+        const val RECENTER_TAU_S = 15f
+        /** Below this angular rate (rad/s) the device counts as still. */
+        const val STILL_THRESHOLD_RAD_S = 0.15f
     }
 }

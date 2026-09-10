@@ -43,6 +43,7 @@ fun ContentView(motionModel: FoldMotionModel) {
     // Default to manual control when no rotation-vector sensor exists.
     var useSensor by remember(hasSensor) { mutableStateOf(hasSensor) }
     var showSettings by remember { mutableStateOf(false) }
+    var autoRecenter by remember { mutableStateOf(true) }
     val effectiveUseSensor = useSensor && hasSensor
 
     val tilt = if (effectiveUseSensor) sensorTilt else manualTilt
@@ -119,6 +120,20 @@ fun ContentView(motionModel: FoldMotionModel) {
                                 checked = effectiveUseSensor,
                                 onCheckedChange = { useSensor = it },
                                 enabled = hasSensor
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Auto-calibrate",
+                                style = MaterialTheme.typography.labelMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Switch(
+                                checked = autoRecenter,
+                                onCheckedChange = {
+                                    autoRecenter = it
+                                    motionModel.setAutoRecenterEnabled(it)
+                                }
                             )
                         }
                         Spacer(Modifier.height(8.dp))
