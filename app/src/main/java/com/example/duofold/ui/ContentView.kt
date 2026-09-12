@@ -56,24 +56,15 @@ fun ContentView(motionModel: FoldMotionModel) {
     val params = remember { FoldParameters() }
 
     Box(Modifier.fillMaxSize()) {
-        // Folded content. On pre-33 (previews only — minSdk is 33) show it plain.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            DemoContentView(
-                Modifier.foldEffect(
-                    tiltDegrees = tilt,
-                    hingeSide = hinge,
-                    parameters = params
-                ),
-                onCalibrateClick = { motionModel.recalibrate() },
-                onSettingsClick = { showSettings = true }
-            )
-        } else {
-            DemoContentView(
-                Modifier,
-                onCalibrateClick = { motionModel.recalibrate() },
-                onSettingsClick = { showSettings = true }
-            )
-        }
+        DemoContentView(
+            Modifier.foldEffect(
+                tiltDegrees = tilt,
+                hingeSide = hinge,
+                parameters = params
+            ),
+            onCalibrateClick = { motionModel.recalibrate() },
+            onSettingsClick = { showSettings = true }
+        )
 
         if (showSettings) {
             AlertDialog(
@@ -87,6 +78,16 @@ fun ContentView(motionModel: FoldMotionModel) {
                                 if (hinge < 0f) "L" else "R"
                             ),
                             style = MaterialTheme.typography.labelLarge
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                "Engine: AGSL RuntimeShader (Android 13+)"
+                            } else {
+                                "Engine: 3D Hardware Fold + RenderEffect (Android 12)"
+                            },
+                            color = Color(0xFF6CE9A6),
+                            style = MaterialTheme.typography.labelSmall
                         )
                         if (!hasSensor) {
                             Spacer(Modifier.height(4.dp))
