@@ -34,3 +34,9 @@ app/src/main/res/raw/duo_fold.agsl   the shader
   `darkenPerMm` (0.012), `maxDarken` (0.55).
 - Known iteration points: tilt/hinge sign conventions, tap count vs perf
   (12 taps now), view-distance/blur/darken constants on a real device.
+
+## 💖 Support My Work
+
+If you find this project useful, please consider supporting its development!
+
+[![ko-fi](https://ko-fi.com)](https://ko-fi.com/xatomicx)
